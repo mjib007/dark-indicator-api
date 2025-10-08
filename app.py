@@ -1,402 +1,703 @@
-# app_dark_indicator.py - 暗黑指標 Flask API
+# app.py - 暗黑指標系統API
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from FinMind.data import DataLoader
+import requests
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import warnings
+import json
 
 warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
-CORS(app)
+CORS(app)  # Allow cross-origin requests
 
-class DarkIndicatorCalculator:
+class DarkIndicatorDataCollector:
     def __init__(self):
-        self.dl = DataLoader()
-        self.end_date = datetime.now().strftime("%Y-%m-%d")
-        self.start_date = (datetime.now() - timedelta(days=365*3)).strftime("%Y-%m-%d")
-    
-    def safe_get_last(self, df, column_name):
-        """安全地取得最後一筆資料"""
-        if column_name in df.columns and len(df[column_name].dropna()) > 0:
-            return df[column_name].dropna().iloc[-1]
-        return None
-    
-    def get_basic_info(self, stock_id):
-        """取得股票基本資料"""
-        try:
-            info = self.dl.taiwan_stock_info()
-            stock_info = info[info['stock_id'] == stock_id]
-            return stock_info.iloc[0] if not stock_info.empty else None
-        except:
-            return None
-    
-    def calculate_revenue_indicators(self, stock_id):
-        """計算營收相關指標"""
-        try:
-            revenue = self.dl.taiwan_stock_month_revenue(
-                stock_id=stock_id,
-                start_date=self.start_date,
-                end_date=self.end_date
-            )
+        """暗黑指標資料收集器"""
+        self.base_url = "https://api.finmindtrade.com/api/v4/data"
+        
+        # 指標對照表 - 根據測試結果確認的資料來源
+        self.indicator_mapping = {
+            # 基本資料區
+            "basic_info": {
+                "dataset": "TaiwanStockInfo",
+                "fields": {
+                    "stock_id": "股票代號",
+                    "stock_name": "股票名稱", 
+                    "industry_category": "產業別",
+                    "type": "股票類型"
+                }
+            },
             
-            if revenue.empty:
-                return {}
+            # 損益表資料
+            "financial_statement": {
+                "dataset": "TaiwanStockFinancialStatements",
+                "fields": {
+                    "營業收入": "最新季營收",
+                    "營業利益（損失）": "最新季營業利益",
+                    "稅前淨利（淨損）": "最新季稅前淨利",
+                    "本期淨利（淨損）": "最新季淨利",
+                    "營業外收入及支出": "營業外收支",
+                    "基本每股盈餘（元）": "最新季EPS",
+                    "營業成本": "營業成本",
+                    "營業毛利（毛損）": "營業毛利"
+                }
+            },
             
-            revenue = revenue.sort_values('date')
-            revenue['revenue'] = pd.to_numeric(revenue['revenue'], errors='coerce')
-            revenue['revenue_yoy'] = revenue['revenue'].pct_change(12) * 100
-            
-            latest = revenue.iloc[-1]
-            
-            # 累計年營收成長率
-            if len(revenue) >= 24:
-                recent_12m = revenue.iloc[-12:]['revenue'].sum()
-                previous_12m = revenue.iloc[-24:-12]['revenue'].sum()
-                annual_revenue_growth = ((recent_12m - previous_12m) / previous_12m * 100) if previous_12m > 0 else None
-            else:
-                annual_revenue_growth = None
-            
-            return {
-                'latest_revenue': float(latest['revenue']),
-                'revenue_yoy': float(latest['revenue_yoy']) if pd.notna(latest['revenue_yoy']) else None,
-                'annual_revenue_growth': float(annual_revenue_growth) if annual_revenue_growth is not None else None
-            }
-        except Exception as e:
-            print(f"營收指標錯誤: {e}")
-            return {}
-    
-    def calculate_financial_indicators(self, stock_id):
-        """計算財務報表指標"""
-        try:
-            # 損益表
-            income = self.dl.taiwan_stock_financial_statement(
-                stock_id=stock_id,
-                start_date=self.start_date,
-                end_date=self.end_date
-            )
-            
-            # 資產負債表
-            balance = self.dl.taiwan_stock_balance_sheet(
-                stock_id=stock_id,
-                start_date=self.start_date,
-                end_date=self.end_date
-            )
+            # 月營收資料
+            "monthly_revenue": {
+                "dataset": "TaiwanStockMonthRevenue",
+                "fields": {
+                    "revenue": "月營收",
+                    "revenue_month": "營收月份",
+                    "revenue_year": "營收年份"
+                }
+            },
             
             # 現金流量表
-            cashflow = self.dl.taiwan_stock_cash_flows_statement(
-                stock_id=stock_id,
-                start_date=self.start_date,
-                end_date=self.end_date
-            )
+            "cashflow": {
+                "dataset": "TaiwanStockCashFlowsStatement", 
+                "fields": {
+                    "營業活動之淨現金流入（流出）": "A-營業活動現金流",
+                    "投資活動之淨現金流入（流出）": "B-投資活動現金流",
+                    "籌資活動之淨現金流入（流出）": "C-融資活動現金流",
+                    "期末現金及約當現金餘額": "E-期末現金餘額"
+                }
+            },
             
-            results = {}
+            # 資產負債表
+            "balance_sheet": {
+                "dataset": "TaiwanStockBalanceSheet",
+                "fields": {
+                    "資產總額": "總資產",
+                    "負債總額": "總負債", 
+                    "流動資產合計": "流動資產",
+                    "流動負債合計": "流動負債",
+                    "存貨": "存貨",
+                    "應收帳款淨額": "應收帳款",
+                    "普通股股本": "股本"
+                }
+            },
             
-            # 處理損益表
-            if not income.empty:
-                income_pivot = income.pivot_table(index='date', columns='type', values='value', aggfunc='first')
-                
-                if 'Revenue' in income_pivot.columns and 'GrossProfit' in income_pivot.columns:
-                    income_pivot['gross_margin'] = (income_pivot['GrossProfit'] / income_pivot['Revenue'] * 100)
-                    results['latest_gross_margin'] = float(self.safe_get_last(income_pivot, 'gross_margin')) if self.safe_get_last(income_pivot, 'gross_margin') is not None else None
-                
-                if 'ProfitLossFromContinuingOperations' in income_pivot.columns:
-                    net_income_series = income_pivot['ProfitLossFromContinuingOperations'].dropna()
-                    if len(net_income_series) >= 8:
-                        recent_4q_profit = net_income_series.iloc[-4:].sum()
-                        previous_4q_profit = net_income_series.iloc[-8:-4].sum()
-                        results['annual_profit_growth'] = float((recent_4q_profit - previous_4q_profit) / abs(previous_4q_profit) * 100) if previous_4q_profit != 0 else None
+            # 交易資訊
+            "trading_info": {
+                "margin": {
+                    "dataset": "TaiwanStockMarginPurchaseShortSale",
+                    "fields": {
+                        "MarginPurchaseTodayBalance": "融資餘額",
+                        "MarginPurchaseLimit": "融資限額",
+                        "ShortSaleTodayBalance": "融券餘額",
+                        "ShortSaleLimit": "融券限額"
+                    }
+                },
+                "daily_price": {
+                    "dataset": "TaiwanStockDaily",
+                    "fields": {
+                        "Trading_Volume": "成交量",
+                        "Trading_money": "成交值",
+                        "open": "開盤價",
+                        "close": "收盤價",
+                        "max": "最高價",
+                        "min": "最低價"
+                    }
+                },
+                "day_trading": {
+                    "dataset": "TaiwanStockDayTrading",
+                    "fields": {
+                        "Volume": "當沖成交量",
+                        "BuyAmount": "當沖買進金額",
+                        "SellAmount": "當沖賣出金額"
+                    }
+                },
+                "per_pbr": {
+                    "dataset": "TaiwanStockPER",
+                    "fields": {
+                        "PER": "本益比",
+                        "PBR": "股價淨值比",
+                        "dividend_yield": "殖利率"
+                    }
+                }
+            },
             
-            # 處理資產負債表
-            if not balance.empty:
-                balance_pivot = balance.pivot_table(index='date', columns='type', values='value', aggfunc='first')
-                
-                # 存貨、應收帳款成長率
-                if 'Inventories' in balance_pivot.columns:
-                    balance_pivot['inventory_growth'] = balance_pivot['Inventories'].pct_change(4) * 100
-                    results['inventory_growth'] = float(self.safe_get_last(balance_pivot, 'inventory_growth')) if self.safe_get_last(balance_pivot, 'inventory_growth') is not None else None
-                
-                if 'AccountsReceivableNet' in balance_pivot.columns:
-                    balance_pivot['ar_growth'] = balance_pivot['AccountsReceivableNet'].pct_change(4) * 100
-                    results['ar_growth'] = float(self.safe_get_last(balance_pivot, 'ar_growth')) if self.safe_get_last(balance_pivot, 'ar_growth') is not None else None
-                
-                # 基本財務數據
-                results['cash_A'] = float(self.safe_get_last(balance_pivot, 'CashAndCashEquivalents')) if self.safe_get_last(balance_pivot, 'CashAndCashEquivalents') is not None else None
-                results['current_liabilities'] = float(self.safe_get_last(balance_pivot, 'CurrentLiabilities')) if self.safe_get_last(balance_pivot, 'CurrentLiabilities') is not None else None
-                results['current_assets'] = float(self.safe_get_last(balance_pivot, 'CurrentAssets')) if self.safe_get_last(balance_pivot, 'CurrentAssets') is not None else None
-                results['total_liabilities'] = float(self.safe_get_last(balance_pivot, 'Liabilities')) if self.safe_get_last(balance_pivot, 'Liabilities') is not None else None
-                results['total_assets'] = float(self.safe_get_last(balance_pivot, 'TotalAssets')) if self.safe_get_last(balance_pivot, 'TotalAssets') is not None else None
-                
-                # 債務比率
-                if results.get('total_liabilities') and results.get('total_assets'):
-                    results['debt_ratio'] = float(results['total_liabilities'] / results['total_assets'] * 100)
-                
-                if results.get('current_assets') and results.get('current_liabilities'):
-                    results['current_ratio'] = float(results['current_assets'] / results['current_liabilities'])
-                
-                inventory = self.safe_get_last(balance_pivot, 'Inventories')
-                if results.get('current_assets') and results.get('current_liabilities') and inventory:
-                    results['quick_ratio'] = float((results['current_assets'] - inventory) / results['current_liabilities'])
+            # 籌碼資料 (FinMind無資料)
+            "institutional": {
+                "fields": {
+                    "超過1千張增減(%)": "FinMind無資料",
+                    "全體董監增減張數": "FinMind無資料",
+                    "全體董監質押(%)": "FinMind無資料", 
+                    "董監持股比例": "FinMind無資料",
+                    "10%大股東變動(近一年)": "FinMind無資料",
+                    "10%大股東變動(最新月份)": "FinMind無資料",
+                    "10%大股東近12個月增減變動次數": "FinMind無資料"
+                }
+            },
             
-            # 處理現金流量表
-            if not cashflow.empty:
-                cashflow_pivot = cashflow.pivot_table(index='date', columns='type', values='value', aggfunc='first')
-                
-                results['operating_cashflow'] = float(self.safe_get_last(cashflow_pivot, 'CashFlowsFromOperatingActivities')) if self.safe_get_last(cashflow_pivot, 'CashFlowsFromOperatingActivities') is not None else None
-                results['investing_cashflow'] = float(self.safe_get_last(cashflow_pivot, 'CashFlowsFromInvestingActivities')) if self.safe_get_last(cashflow_pivot, 'CashFlowsFromInvestingActivities') is not None else None
-                results['financing_cashflow'] = float(self.safe_get_last(cashflow_pivot, 'CashFlowsFromFinancingActivities')) if self.safe_get_last(cashflow_pivot, 'CashFlowsFromFinancingActivities') is not None else None
-            
-            return results
-        except Exception as e:
-            print(f"財務指標錯誤: {e}")
-            return {}
+            # 特殊觀察點 (FinMind無資料)
+            "special_events": {
+                "fields": {
+                    "庫藏股次數": "FinMind無資料",
+                    "可轉債次數": "FinMind無資料"
+                }
+            }
+        }
     
-    def calculate_trading_indicators(self, stock_id):
-        """計算交易面指標"""
+    def fetch_data(self, dataset, stock_id, start_date=None):
+        """通用資料抓取方法"""
+        if start_date is None:
+            start_date = (datetime.now() - timedelta(days=2*365)).strftime("%Y-%m-%d")
+        
+        params = {
+            "dataset": dataset,
+            "data_id": stock_id,
+            "start_date": start_date
+        }
+        
         try:
-            # 股價資料
-            price = self.dl.taiwan_stock_daily(
-                stock_id=stock_id,
-                start_date=self.start_date,
-                end_date=self.end_date
-            )
+            response = requests.get(self.base_url, params=params, timeout=15)
             
-            # 融資融券
-            margin = self.dl.taiwan_stock_margin_purchase_short_sale(
-                stock_id=stock_id,
-                start_date=self.start_date,
-                end_date=self.end_date
-            )
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("status") == 200 and data.get("data"):
+                    return data["data"]
             
-            # 當沖
-            day_trading = self.dl.taiwan_stock_day_trading(
-                stock_id=stock_id,
-                start_date=self.start_date,
-                end_date=self.end_date
-            )
+            return None
             
-            results = {}
-            
-            if not price.empty:
-                price = price.sort_values('date')
-                latest_price = price.iloc[-1]
-                
-                results['latest_close'] = float(latest_price['close'])
-                results['latest_volume'] = int(latest_price['Trading_Volume'])
-                
-                if len(price) >= 10:
-                    results['avg_10day_volume'] = float(price.tail(10)['Trading_Volume'].mean())
-                if len(price) >= 60:
-                    results['avg_60day_volume'] = float(price.tail(60)['Trading_Volume'].mean())
-            
-            if not margin.empty:
-                margin = margin.sort_values('date')
-                latest_margin = margin.iloc[-1]
-                
-                margin_balance = latest_margin.get('MarginPurchaseTodayBalance', 0)
-                margin_limit = latest_margin.get('MarginPurchaseLimit', 1)
-                
-                results['margin_balance_shares'] = float(margin_balance)
-                results['margin_usage_rate'] = float(margin_balance / margin_limit * 100) if margin_limit > 0 else 0
-            
-            if not day_trading.empty and not price.empty:
-                day_trading = day_trading.sort_values('date')
-                merged = pd.merge(day_trading, price, on=['date', 'stock_id'], how='inner')
-                if not merged.empty:
-                    merged['day_trading_rate'] = (merged['Volume'] / merged['Trading_Volume'] * 100)
-                    results['day_trading_rate'] = float(merged['day_trading_rate'].iloc[-1])
-            
-            return results
         except Exception as e:
-            print(f"交易指標錯誤: {e}")
-            return {}
+            print(f"API Error for {dataset}: {str(e)}")
+            return None
     
-    def analyze_stock(self, stock_id):
-        """分析股票 - API主要方法"""
+    def collect_all_data(self, stock_code):
+        """收集指定股票的所有暗黑指標資料"""
         try:
-            # 基本資料
-            basic_info = self.get_basic_info(stock_id)
-            if basic_info is None:
-                return {"success": False, "error": f"找不到股票 {stock_id}"}
-            
-            # 計算各類指標
-            revenue_indicators = self.calculate_revenue_indicators(stock_id)
-            financial_indicators = self.calculate_financial_indicators(stock_id)
-            trading_indicators = self.calculate_trading_indicators(stock_id)
-            
-            # 整合結果
-            all_indicators = {
-                'stock_id': stock_id,
-                'stock_name': basic_info['stock_name'],
-                'industry': basic_info['industry_category'],
-                **revenue_indicators,
-                **financial_indicators,
-                **trading_indicators
+            result = {
+                "success": True,
+                "stock_code": stock_code,
+                "timestamp": datetime.now().isoformat(),
+                "data_availability": {},
+                "raw_data": {},
+                "calculated_indicators": {}
             }
             
-            # 計算衍生指標和警示
-            warnings_result = self.generate_warnings(all_indicators)
+            # 1. 基本資料
+            print(f"抓取基本資料...")
+            basic_data = self.fetch_data("TaiwanStockInfo", "")
+            if basic_data:
+                stock_info = [item for item in basic_data if item.get('stock_id') == stock_code]
+                if stock_info:
+                    result["raw_data"]["basic_info"] = stock_info[0]
+                    result["data_availability"]["基本資料區"] = "可用"
+                else:
+                    result["data_availability"]["基本資料區"] = "找不到該股票"
+            else:
+                result["data_availability"]["基本資料區"] = "API錯誤"
             
+            # 2. 財務報表資料
+            print(f"抓取財務報表...")
+            financial_data = self.fetch_data("TaiwanStockFinancialStatements", stock_code)
+            if financial_data:
+                result["raw_data"]["financial_statement"] = financial_data
+                result["data_availability"]["損益表資料"] = f"可用 ({len(financial_data)}筆)"
+            else:
+                result["data_availability"]["損益表資料"] = "無資料"
+            
+            # 3. 月營收資料
+            print(f"抓取月營收...")
+            revenue_data = self.fetch_data("TaiwanStockMonthRevenue", stock_code)
+            if revenue_data:
+                result["raw_data"]["monthly_revenue"] = revenue_data
+                result["data_availability"]["月營收資料"] = f"可用 ({len(revenue_data)}筆)"
+            else:
+                result["data_availability"]["月營收資料"] = "無資料"
+            
+            # 4. 現金流量表
+            print(f"抓取現金流量表...")
+            cashflow_data = self.fetch_data("TaiwanStockCashFlowsStatement", stock_code)
+            if cashflow_data:
+                result["raw_data"]["cashflow"] = cashflow_data
+                result["data_availability"]["現金流量表"] = f"可用 ({len(cashflow_data)}筆)"
+            else:
+                result["data_availability"]["現金流量表"] = "無資料"
+            
+            # 5. 資產負債表
+            print(f"抓取資產負債表...")
+            balance_data = self.fetch_data("TaiwanStockBalanceSheet", stock_code)
+            if balance_data:
+                result["raw_data"]["balance_sheet"] = balance_data
+                result["data_availability"]["資產負債表"] = f"可用 ({len(balance_data)}筆)"
+            else:
+                result["data_availability"]["資產負債表"] = "無資料"
+            
+            # 6. 融資融券資料
+            print(f"抓取融資融券...")
+            margin_data = self.fetch_data("TaiwanStockMarginPurchaseShortSale", stock_code)
+            if margin_data:
+                result["raw_data"]["margin_trading"] = margin_data
+                result["data_availability"]["融資融券"] = f"可用 ({len(margin_data)}筆)"
+            else:
+                result["data_availability"]["融資融券"] = "無資料"
+            
+            # 7. 日股價資料
+            print(f"抓取日股價...")
+            daily_data = self.fetch_data("TaiwanStockDaily", stock_code)
+            if daily_data:
+                result["raw_data"]["daily_price"] = daily_data
+                result["data_availability"]["日股價資料"] = f"可用 ({len(daily_data)}筆)"
+            else:
+                result["data_availability"]["日股價資料"] = "無資料"
+            
+            # 8. 當沖資料
+            print(f"抓取當沖資料...")
+            daytrading_data = self.fetch_data("TaiwanStockDayTrading", stock_code)
+            if daytrading_data:
+                result["raw_data"]["day_trading"] = daytrading_data
+                result["data_availability"]["當沖資料"] = f"可用 ({len(daytrading_data)}筆)"
+            else:
+                result["data_availability"]["當沖資料"] = "無資料"
+            
+            # 9. 本益比資料
+            print(f"抓取本益比資料...")
+            per_data = self.fetch_data("TaiwanStockPER", stock_code)
+            if per_data:
+                result["raw_data"]["per_pbr"] = per_data
+                result["data_availability"]["本益比資料"] = f"可用 ({len(per_data)}筆)"
+            else:
+                result["data_availability"]["本益比資料"] = "無資料"
+            
+            # 10. 標記FinMind無資料的項目
+            result["data_availability"]["籌碼資料"] = "FinMind無資料 - 需公開資訊觀測站"
+            result["data_availability"]["特殊事件"] = "FinMind無資料 - 需重大訊息"
+            
+            # 計算基本指標
+            result["calculated_indicators"] = self._calculate_basic_indicators(result["raw_data"])
+            
+            return result
+            
+        except Exception as e:
             return {
-                "success": True,
-                "stock_id": stock_id,
-                "stock_name": basic_info['stock_name'],
-                "industry": basic_info['industry_category'],
-                "indicators": all_indicators,
-                "warnings": warnings_result['warnings'],
-                "warning_explanations": warnings_result['warning_explanations'],
-                "warning_count": warnings_result['warning_count'],
-                "total_indicators_checked": warnings_result['total_indicators_checked'],
-                "warning_ratio": warnings_result['warning_ratio'],
-                "risk_level": warnings_result['risk_level'],
+                "success": False,
+                "stock_code": stock_code,
+                "error": str(e),
                 "timestamp": datetime.now().isoformat()
             }
+    
+    def _calculate_basic_indicators(self, raw_data):
+        """計算基本指標"""
+        indicators = {}
+        
+        try:
+            # 1. 基本資料處理
+            if "basic_info" in raw_data:
+                basic = raw_data["basic_info"]
+                indicators["基本資料"] = {
+                    "股票代號": basic.get("stock_id"),
+                    "股票名稱": basic.get("stock_name"),
+                    "產業別": basic.get("industry_category"),
+                    "股票類型": basic.get("type")
+                }
+            
+            # 2. 最新財務指標
+            if "financial_statement" in raw_data:
+                financial_df = pd.DataFrame(raw_data["financial_statement"])
+                latest_date = financial_df['date'].max()
+                latest_financial = financial_df[financial_df['date'] == latest_date]
+                
+                # 提取關鍵財務項目
+                financial_mapping = {
+                    "營業收入": "最新季營收",
+                    "營業利益（損失）": "最新季營業利益", 
+                    "稅前淨利（淨損）": "最新季稅前淨利",
+                    "本期淨利（淨損）": "最新季淨利",
+                    "營業外收入及支出": "營業外收支",
+                    "基本每股盈餘（元）": "最新季EPS",
+                    "營業成本": "營業成本",
+                    "營業毛利（毛損）": "營業毛利"
+                }
+                
+                financial_indicators = {"最新財報日期": latest_date}
+                for origin_name, display_name in financial_mapping.items():
+                    match = latest_financial[latest_financial['origin_name'] == origin_name]
+                    if not match.empty:
+                        value = float(match['value'].iloc[0])
+                        financial_indicators[display_name] = value
+                        financial_indicators[f"{display_name}_億元"] = f"{value/1e8:.2f}億" if abs(value) >= 1e8 else f"{value:,.0f}"
+                    else:
+                        financial_indicators[display_name] = "無資料"
+                
+                indicators["損益表指標"] = financial_indicators
+                
+                # 計算比率
+                if "營業收入" in [match['origin_name'] for _, match in latest_financial.iterrows()]:
+                    revenue_val = latest_financial[latest_financial['origin_name'] == '營業收入']['value'].iloc[0]
+                    operating_val = latest_financial[latest_financial['origin_name'] == '營業利益（損失）']['value']
+                    gross_val = latest_financial[latest_financial['origin_name'] == '營業毛利（毛損）']['value']
+                    
+                    if not operating_val.empty and revenue_val != 0:
+                        indicators["營業利益率%"] = f"{(float(operating_val.iloc[0]) / float(revenue_val)) * 100:.1f}%"
+                    
+                    if not gross_val.empty and revenue_val != 0:
+                        indicators["毛利率%"] = f"{(float(gross_val.iloc[0]) / float(revenue_val)) * 100:.1f}%"
+            
+            # 3. 月營收指標
+            if "monthly_revenue" in raw_data:
+                revenue_df = pd.DataFrame(raw_data["monthly_revenue"])
+                if not revenue_df.empty:
+                    revenue_df['date'] = pd.to_datetime(revenue_df['date'])
+                    latest_revenue = revenue_df.iloc[-1]
+                    
+                    # 計算營收年增率
+                    current_date = latest_revenue['date']
+                    current_year = current_date.year
+                    current_month = current_date.month
+                    
+                    last_year_data = revenue_df[
+                        (revenue_df['date'].dt.year == current_year - 1) & 
+                        (revenue_df['date'].dt.month == current_month)
+                    ]
+                    
+                    if not last_year_data.empty:
+                        current_revenue = latest_revenue['revenue']
+                        last_year_revenue = last_year_data['revenue'].iloc[0]
+                        yoy_growth = (current_revenue - last_year_revenue) / last_year_revenue * 100
+                        
+                        indicators["月營收指標"] = {
+                            "最新月份": current_date.strftime('%Y-%m'),
+                            "最新月營收": f"{current_revenue/1e8:.1f}億",
+                            "去年同月營收": f"{last_year_revenue/1e8:.1f}億",
+                            "營收年增率": f"{yoy_growth:.1f}%"
+                        }
+            
+            # 4. 現金流指標
+            if "cashflow" in raw_data:
+                cf_df = pd.DataFrame(raw_data["cashflow"])
+                latest_cf_date = cf_df['date'].max()
+                latest_cf = cf_df[cf_df['date'] == latest_cf_date]
+                
+                cf_mapping = {
+                    "營業活動之淨現金流入（流出）": "A-營業活動現金流",
+                    "投資活動之淨現金流入（流出）": "B-投資活動現金流",
+                    "籌資活動之淨現金流入（流出）": "C-融資活動現金流",
+                    "期末現金及約當現金餘額": "E-期末現金餘額"
+                }
+                
+                cf_indicators = {"最新現金流日期": latest_cf_date}
+                for origin_name, display_name in cf_mapping.items():
+                    match = latest_cf[latest_cf['origin_name'] == origin_name]
+                    if not match.empty:
+                        value = float(match['value'].iloc[0])
+                        cf_indicators[display_name] = value
+                        cf_indicators[f"{display_name}_億元"] = f"{value/1e8:.2f}億"
+                    else:
+                        cf_indicators[display_name] = "無資料"
+                
+                indicators["現金流指標"] = cf_indicators
+            
+            # 5. 資產負債指標
+            if "balance_sheet" in raw_data:
+                bs_df = pd.DataFrame(raw_data["balance_sheet"])
+                latest_bs_date = bs_df['date'].max()
+                latest_bs = bs_df[bs_df['date'] == latest_bs_date]
+                
+                bs_mapping = {
+                    "資產總額": "總資產",
+                    "負債總額": "總負債",
+                    "流動資產合計": "流動資產", 
+                    "流動負債合計": "流動負債",
+                    "存貨": "存貨",
+                    "普通股股本": "股本"
+                }
+                
+                bs_indicators = {"最新資產負債表日期": latest_bs_date}
+                bs_values = {}
+                
+                for origin_name, display_name in bs_mapping.items():
+                    match = latest_bs[latest_bs['origin_name'] == origin_name]
+                    if not match.empty:
+                        value = float(match['value'].iloc[0])
+                        bs_values[display_name] = value
+                        bs_indicators[display_name] = value
+                        bs_indicators[f"{display_name}_億元"] = f"{value/1e8:.2f}億"
+                    else:
+                        bs_indicators[display_name] = "無資料"
+                
+                # 計算比率
+                if "總負債" in bs_values and "總資產" in bs_values and bs_values["總資產"] != 0:
+                    debt_ratio = (bs_values["總負債"] / bs_values["總資產"]) * 100
+                    bs_indicators["負債比率"] = f"{debt_ratio:.1f}%"
+                
+                if "流動資產" in bs_values and "流動負債" in bs_values and bs_values["流動負債"] != 0:
+                    current_ratio = bs_values["流動資產"] / bs_values["流動負債"]
+                    bs_indicators["流動比率"] = f"{current_ratio:.2f}"
+                
+                if all(k in bs_values for k in ["流動資產", "存貨", "流動負債"]) and bs_values["流動負債"] != 0:
+                    quick_ratio = (bs_values["流動資產"] - bs_values["存貨"]) / bs_values["流動負債"]
+                    bs_indicators["速動比率"] = f"{quick_ratio:.2f}"
+                
+                indicators["資產負債指標"] = bs_indicators
+            
+            # 6. 交易指標
+            trading_indicators = {}
+            
+            # 融資融券
+            if "margin_trading" in raw_data:
+                margin_df = pd.DataFrame(raw_data["margin_trading"])
+                if not margin_df.empty:
+                    latest_margin = margin_df.iloc[-1]
+                    融資餘額 = latest_margin.get('MarginPurchaseTodayBalance', 0)
+                    融資限額 = latest_margin.get('MarginPurchaseLimit', 0)
+                    
+                    trading_indicators.update({
+                        "融資餘額": f"{融資餘額:,}張",
+                        "融資限額": f"{融資限額:,}張",
+                        "融資使用率": f"{(融資餘額/融資限額*100):.2f}%" if 融資限額 > 0 else "無法計算"
+                    })
+            
+            # 本益比
+            if "per_pbr" in raw_data:
+                per_df = pd.DataFrame(raw_data["per_pbr"])
+                if not per_df.empty:
+                    latest_per = per_df.iloc[-1]
+                    trading_indicators.update({
+                        "本益比": latest_per.get('PER', '無資料'),
+                        "股價淨值比": latest_per.get('PBR', '無資料'),
+                        "殖利率": f"{latest_per.get('dividend_yield', 0):.2f}%" if latest_per.get('dividend_yield') else '無資料'
+                    })
+            
+            if trading_indicators:
+                indicators["交易指標"] = trading_indicators
+            
+            # 7. 標記無資料項目
+            indicators["FinMind無資料項目"] = {
+                "籌碼資料": {
+                    "超過1千張增減(%)": "需公開資訊觀測站",
+                    "全體董監增減張數": "需公開資訊觀測站",
+                    "全體董監質押(%)": "需公開資訊觀測站",
+                    "董監持股比例": "需公開資訊觀測站",
+                    "10%大股東變動(近一年)": "需公開資訊觀測站",
+                    "10%大股東變動(最新月份)": "需公開資訊觀測站", 
+                    "10%大股東近12個月增減變動次數": "需公開資訊觀測站"
+                },
+                "特殊事件": {
+                    "庫藏股次數": "需重大訊息公告",
+                    "可轉債次數": "需重大訊息公告"
+                }
+            }
             
         except Exception as e:
-            return {"success": False, "error": str(e)}
-    
-    def generate_warnings(self, indicators):
-        """生成警示（簡化版，包含白話解釋）"""
-        warnings = []
-        warning_explanations = []
-        warning_count = 0
+            indicators["計算錯誤"] = str(e)
         
-        # 檢查各項指標
-        revenue_yoy = indicators.get('revenue_yoy')
-        inventory_growth = indicators.get('inventory_growth')
-        ar_growth = indicators.get('ar_growth')
-        debt_ratio = indicators.get('debt_ratio')
-        current_ratio = indicators.get('current_ratio')
-        op_cf = indicators.get('operating_cashflow')
-        margin_usage_rate = indicators.get('margin_usage_rate')
-        day_trading_rate = indicators.get('day_trading_rate')
-        
-        # 營收應收比例落差
-        if revenue_yoy is not None and ar_growth is not None:
-            revenue_ar_gap = ar_growth - revenue_yoy
-            if abs(revenue_ar_gap) > 30:
-                warnings.append("營收與應收帳款成長差異過大")
-                if revenue_ar_gap > 30:
-                    explanation = f"營收成長{revenue_yoy:.1f}%，但應收帳款成長{ar_growth:.1f}%，應收帳款成長快很多，可能是客戶延遲付款或營收灌水。"
-                else:
-                    if ar_growth < 0:
-                        explanation = f"營收成長{revenue_yoy:.1f}%，但應收帳款反而減少{abs(ar_growth):.1f}%。雖然看似收款變快，但落差太大需確認營收真實性。"
-                    else:
-                        explanation = f"營收成長{revenue_yoy:.1f}%，但應收帳款只成長{ar_growth:.1f}%，落差過大需注意營收品質。"
-                warning_explanations.append({"warning": "營收與應收帳款成長差異過大", "explanation": explanation})
-                warning_count += 1
-        
-        # 負債比率
-        if debt_ratio is not None and debt_ratio > 50:
-            warnings.append("負債比率過高")
-            warning_explanations.append({
-                "warning": "負債比率過高",
-                "explanation": f"負債比率{debt_ratio:.1f}%，超過50%。公司資產有一半以上是借來的，負債太高會增加財務風險。"
-            })
-            warning_count += 1
-        
-        # 流動比率
-        if current_ratio is not None and current_ratio < 1.0:
-            warnings.append("流動比率低於1，短期償債能力不足")
-            warning_explanations.append({
-                "warning": "流動比率低於1，短期償債能力不足",
-                "explanation": f"流動比率{current_ratio:.2f}，低於1.0。短期內要還的錢比手上可快速變現的資產還多，可能會周轉不靈。"
-            })
-            warning_count += 1
-        
-        # 營業現金流
-        if op_cf is not None and op_cf < 0:
-            warnings.append("營業現金流為負")
-            warning_explanations.append({
-                "warning": "營業現金流為負",
-                "explanation": f"營業現金流為負值{op_cf:,.0f}。公司做生意不但沒賺到現金，還倒貼錢出去，長期這樣會出問題。"
-            })
-            warning_count += 1
-        
-        # 融資使用率
-        if margin_usage_rate is not None and margin_usage_rate > 50:
-            warnings.append("融資使用率過高")
-            warning_count += 1
-        
-        # 融資賣壓
-        margin_shares = indicators.get('margin_balance_shares')
-        avg_10d_vol = indicators.get('avg_10day_volume')
-        if margin_shares and avg_10d_vol:
-            margin_vol_ratio = (margin_shares * 1000 / avg_10d_vol)
-            if margin_vol_ratio > 0.3:
-                warnings.append("融資餘額過高且成交量不足，可能形成賣壓")
-                warning_explanations.append({
-                    "warning": "融資餘額過高且成交量不足，可能形成賣壓",
-                    "explanation": f"融資餘額是10日平均成交量的{margin_vol_ratio:.1f}倍。就像小河道裡太多船想出港，如果融資戶想賣出，可能造成股價大跌。"
-                })
-                warning_count += 1
-        
-        # 當沖率
-        if day_trading_rate is not None and day_trading_rate > 30:
-            warnings.append("當沖率過高")
-            warning_count += 1
-        
-        # 計算檢查指標數
-        indicator_checks = [revenue_yoy, inventory_growth, ar_growth, debt_ratio, current_ratio, op_cf, margin_usage_rate, day_trading_rate]
-        total_indicators_checked = sum(1 for x in indicator_checks if x is not None)
-        if margin_shares and avg_10d_vol:
-            total_indicators_checked += 1
-        
-        # 風險等級
-        warning_ratio = (warning_count / total_indicators_checked * 100) if total_indicators_checked > 0 else 0
-        
-        if warning_ratio >= 40:
-            risk_level = "高風險"
-        elif warning_ratio >= 20:
-            risk_level = "中風險"
-        else:
-            risk_level = "低風險"
-        
-        return {
-            'warnings': warnings,
-            'warning_explanations': warning_explanations,
-            'warning_count': warning_count,
-            'total_indicators_checked': total_indicators_checked,
-            'warning_ratio': round(warning_ratio, 1),
-            'risk_level': risk_level
-        }
+        return indicators
 
-# 創建分析器實例
-analyzer = DarkIndicatorCalculator()
+# 建立資料收集器實例
+collector = DarkIndicatorDataCollector()
 
 @app.route('/')
 def home():
-    """API 首頁"""
+    """API首頁"""
     return jsonify({
-        "message": "暗黑指標分析 API",
+        "message": "暗黑指標系統 API",
         "version": "1.0",
+        "description": "提供完整的股票暗黑指標資料收集",
         "endpoints": {
-            "/analyze/<stock_code>": "分析指定股票的暗黑指標",
+            "/dark-indicators/<stock_code>": "取得指定股票的所有暗黑指標資料",
+            "/raw-data/<stock_code>": "取得指定股票的原始資料",
             "/health": "健康檢查"
-        }
+        },
+        "author": "暗黑指標系統",
+        "note": "包含FinMind可用資料與無資料項目標記"
     })
 
-@app.route('/analyze/<stock_code>')
-def analyze_stock(stock_code):
-    """分析指定股票"""
+@app.route('/dark-indicators/<stock_code>')
+def get_dark_indicators(stock_code):
+    """取得指定股票的完整暗黑指標資料"""
     if not stock_code or len(stock_code) < 4:
         return jsonify({"success": False, "error": "無效的股票代碼"}), 400
     
-    result = analyzer.analyze_stock(stock_code)
+    print(f"開始收集 {stock_code} 的暗黑指標資料...")
+    result = collector.collect_all_data(stock_code)
     
     if result["success"]:
         return jsonify(result)
     else:
         return jsonify(result), 500
 
+@app.route('/raw-data/<stock_code>')
+def get_raw_data(stock_code):
+    """取得指定股票的原始資料 (專為OpenAI分析設計)"""
+    if not stock_code or len(stock_code) < 4:
+        return jsonify({"success": False, "error": "無效的股票代碼"}), 400
+    
+    try:
+        print(f"收集 {stock_code} 的原始資料供AI分析...")
+        
+        # 收集所有資料
+        all_data = collector.collect_all_data(stock_code)
+        
+        if not all_data["success"]:
+            return jsonify(all_data), 500
+        
+        # 為AI分析重新組織資料格式
+        ai_ready_data = {
+            "analysis_target": {
+                "stock_code": stock_code,
+                "analysis_date": datetime.now().strftime("%Y-%m-%d"),
+                "data_source": "FinMind API"
+            },
+            
+            "available_data": all_data["data_availability"],
+            
+            "financial_data": {
+                "基本資料": all_data["raw_data"].get("basic_info", {}),
+                "最新財務指標": all_data["calculated_indicators"].get("損益表指標", {}),
+                "月營收資料": all_data["calculated_indicators"].get("月營收指標", {}),
+                "現金流指標": all_data["calculated_indicators"].get("現金流指標", {}),
+                "資產負債指標": all_data["calculated_indicators"].get("資產負債指標", {}),
+                "交易指標": all_data["calculated_indicators"].get("交易指標", {})
+            },
+            
+            "risk_analysis_framework": {
+                "現金流六大檢驗規則": {
+                    "規則1": "A營業現金流是否逐年增加",
+                    "規則2": "B投資現金流以負值為優，且|B|<A較佳",  
+                    "規則3": "B為負值時，A是否增加(資本支出效益)",
+                    "規則4": "C融資現金流合理性檢查",
+                    "規則5": "A>D較佳(現金流品質)",
+                    "規則6": "E期末餘額增加或穩定"
+                },
+                
+                "五大致命組合": {
+                    "致命組合1": "債務+現金流危機: 營業現金流<0 + 負債比>50% + 流動比<1.0",
+                    "致命組合2": "融資賣壓崩盤: 融資使用率>60% + 融資賣壓倍數>0.3 + 當沖率>30%",
+                    "致命組合3": "獲利品質惡化: 營收成長>10% + EPS衰退>-10% + 業外比重>50%",
+                    "致命組合4": "內部人逃命: 董監持股下降 + 質押率>30% + 大股東異動>3次",
+                    "致命組合5": "矛盾護盤: 庫藏股+可轉債同時發生"
+                },
+                
+                "警示標準": {
+                    "營收成長率": "< 0% 為警示",
+                    "EPS年增率": "< 0% 為警示", 
+                    "營業利益率": "< 5% 為警示",
+                    "毛利率": "< 10% 為警示",
+                    "業外損益比重": "> 50% 為警示",
+                    "負債比率": "> 50% 為警示",
+                    "流動比率": "< 1.0 為警示",
+                    "速動比率": "< 0.8 為警示",
+                    "融資使用率": "> 60% 為警示",
+                    "本益比": "< 0 或 > 50 為警示"
+                }
+            },
+            
+            "missing_data_items": all_data["calculated_indicators"].get("FinMind無資料項目", {}),
+            
+            "analysis_instructions": {
+                "請分析": [
+                    "1. 根據現金流六大檢驗規則分析企業現金流健康度",
+                    "2. 檢查是否符合五大致命組合的任一組合",
+                    "3. 計算各項財務比率並對照警示標準",
+                    "4. 評估整體財務風險等級 (低風險🟢/中風險🟡/高風險🔴)",
+                    "5. 提供具體的投資建議和風險提醒"
+                ],
+                "分析重點": [
+                    "財務體質是否健康",
+                    "現金流結構是否合理", 
+                    "是否有隱藏的財務風險",
+                    "籌碼面是否穩定 (雖然FinMind無此資料)",
+                    "估值是否合理"
+                ],
+                "輸出格式": "請提供結構化的分析報告，包含風險等級、主要發現、具體建議"
+            }
+        }
+        
+        return jsonify({
+            "success": True,
+            "ready_for_ai_analysis": True,
+            "data": ai_ready_data,
+            "timestamp": datetime.now().isoformat(),
+            "note": "此資料已格式化供OpenAI分析使用"
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "success": False, 
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }), 500
+
+@app.route('/indicators-list')
+def get_indicators_list():
+    """取得暗黑指標清單與說明"""
+    return jsonify({
+        "success": True,
+        "indicators_overview": {
+            "總指標數": "39項",
+            "FinMind可用": "32項 (82%)",
+            "需其他資料源": "7項 (18%)"
+        },
+        
+        "available_indicators": {
+            "基本資料區": ["股票代號", "股票名稱", "產業別", "股票類型"],
+            
+            "損益表資料": [
+                "最新月份營收", "最新月份營收YoY%", "最近十二個月累計營收",
+                "最新十二個月累計營收YoY%", "最新營業利益率", "最新營業利益率%",
+                "最新季淨利", "最新季淨利YoY%", "最新季EPS", "最新季EPS_YoY%",
+                "本益比", "單季業外損益佔稅前淨利%", "累季業外損益佔稅前淨利%"
+            ],
+            
+            "現金流量表": [
+                "A-營業活動現金流", "B-投資活動現金流", "C-融資活動現金流",
+                "D-稅前淨利", "E-期末現金餘額"
+            ],
+            
+            "交易資訊區": [
+                "融資使用率%", "融資餘額", "10日成交量", "融資餘額/10日成交量",
+                "股本", "現股當沖率%", "12日週轉率"
+            ],
+            
+            "債務壓力區": ["負債比率", "流動比率", "速動比率"]
+        },
+        
+        "unavailable_indicators": {
+            "籌碼區": [
+                "超過1千張增減(%)", "全體董監增減張數", "全體董監質押(%)",
+                "董監持股比例", "10%大股東變動(近一年)", "10%大股東變動(最新月份)",
+                "10%大股東近12個月增減變動次數"
+            ],
+            "特殊觀察點": ["庫藏股次數", "可轉債次數"]
+        },
+        
+        "data_sources": {
+            "FinMind_API": "免費使用，涵蓋核心財務指標",
+            "公開資訊觀測站": "籌碼面資料需要",
+            "重大訊息公告": "特殊事件資料需要"
+        }
+    })
+
 @app.route('/health')
 def health_check():
     """健康檢查"""
-    return jsonify({"status": "healthy", "timestamp": datetime.now().isoformat()})
+    return jsonify({
+        "status": "healthy", 
+        "service": "暗黑指標系統API",
+        "timestamp": datetime.now().isoformat(),
+        "endpoints_available": [
+            "/", "/dark-indicators/<stock_code>", "/raw-data/<stock_code>", 
+            "/indicators-list", "/health"
+        ]
+    })
+
+@app.route('/test/<stock_code>')
+def test_api(stock_code):
+    """測試API功能"""
+    return jsonify({
+        "message": f"測試 {stock_code} 的API連接",
+        "timestamp": datetime.now().isoformat(),
+        "next_step": f"請使用 /dark-indicators/{stock_code} 取得完整資料"
+    })
 
 if __name__ == '__main__':
+    # Zeabur會自動設定PORT環境變數
     import os
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, debug=True)
