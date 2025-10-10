@@ -509,7 +509,8 @@ class DarkIndicatorDataCollector:
             
             # 6. 交易指標
             trading_indicators = {}
-            # 十日平均成交量 - 新增！
+            
+            # 十日平均成交量 + 週轉率 - 新增！
             if "daily_price" in raw_data:
                 daily_df = pd.DataFrame(raw_data["daily_price"])
                 if not daily_df.empty and len(daily_df) >= 10:
@@ -518,13 +519,45 @@ class DarkIndicatorDataCollector:
                     avg_volume_10d = recent_10_days['Trading_Volume'].mean()
                     latest_volume = daily_df.iloc[-1]['Trading_Volume']
                     
-                    trading_indicators.update({
-                        "10日平均成交量": f"{avg_volume_10d:,.0f}股",
-                        "10日平均成交量_張": f"{avg_volume_10d/1000:,.0f}張",
-                        "最新成交量": f"{latest_volume:,.0f}股",
-                        "最新成交量_張": f"{latest_volume/1000:,.0f}張",
-                        "量比": f"{(latest_volume / avg_volume_10d * 100):.1f}%"
-                    })            
+                    # 計算週轉率（需要股本資料）
+                    if "balance_sheet" in raw_data:
+                        bs_df = pd.DataFrame(raw_data["balance_sheet"])
+                        bs_df['date'] = pd.to_datetime(bs_df['date'])
+                        latest_bs = bs_df[bs_df['date'] == bs_df['date'].max()]
+                        stock_capital_match = latest_bs[latest_bs['origin_name'] == '普通股股本']
+                        
+                        if not stock_capital_match.empty:
+                            stock_capital = float(stock_capital_match['value'].iloc[0]) / 10  # 股本轉換為股數
+                            daily_turnover = (latest_volume / stock_capital) * 100
+                            turnover_10d = (avg_volume_10d / stock_capital) * 100
+                            
+                            trading_indicators.update({
+                                "10日平均成交量": f"{avg_volume_10d:,.0f}股",
+                                "10日平均成交量_張": f"{avg_volume_10d/1000:,.0f}張",
+                                "最新成交量": f"{latest_volume:,.0f}股",
+                                "最新成交量_張": f"{latest_volume/1000:,.0f}張",
+                                "量比": f"{(latest_volume / avg_volume_10d * 100):.1f}%",
+                                "單日週轉率": f"{daily_turnover:.2f}%",
+                                "10日平均週轉率": f"{turnover_10d:.2f}%"
+                            })
+                        else:
+                            # 沒有股本資料，只顯示成交量
+                            trading_indicators.update({
+                                "10日平均成交量": f"{avg_volume_10d:,.0f}股",
+                                "10日平均成交量_張": f"{avg_volume_10d/1000:,.0f}張",
+                                "最新成交量": f"{latest_volume:,.0f}股",
+                                "最新成交量_張": f"{latest_volume/1000:,.0f}張",
+                                "量比": f"{(latest_volume / avg_volume_10d * 100):.1f}%"
+                            })
+                    else:
+                        # 沒有資產負債表，只顯示成交量
+                        trading_indicators.update({
+                            "10日平均成交量": f"{avg_volume_10d:,.0f}股",
+                            "10日平均成交量_張": f"{avg_volume_10d/1000:,.0f}張",
+                            "最新成交量": f"{latest_volume:,.0f}股",
+                            "最新成交量_張": f"{latest_volume/1000:,.0f}張",
+                            "量比": f"{(latest_volume / avg_volume_10d * 100):.1f}%"
+                        })            
             # 融資融券
             if "margin_trading" in raw_data:
                 margin_df = pd.DataFrame(raw_data["margin_trading"])
