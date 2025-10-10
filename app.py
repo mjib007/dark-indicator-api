@@ -282,11 +282,13 @@ class DarkIndicatorDataCollector:
                 "timestamp": datetime.now().isoformat()
             }
     
-def _calculate_basic_indicators(self, raw_data):
+    def _calculate_basic_indicators(self, raw_data):
         """計算基本指標 - 修正版，加入YoY計算和應收帳款"""
         indicators = {}
         
         try:
+            print("🔧 使用修正版的_calculate_basic_indicators函數!")
+            
             # 1. 基本資料處理
             if "basic_info" in raw_data:
                 basic = raw_data["basic_info"]
@@ -350,6 +352,7 @@ def _calculate_basic_indicators(self, raw_data):
                                 yoy_growth = ((current_value - last_year_value) / abs(last_year_value)) * 100
                                 financial_indicators[f"{display_name}_YoY成長率"] = f"{yoy_growth:.1f}%"
                                 financial_indicators[f"{display_name}_去年同期"] = f"{last_year_value/1e8:.2f}億" if abs(last_year_value) >= 1e8 else f"{last_year_value:,.0f}"
+                                print(f"✅ {display_name}YoY: {current_value/1e8:.2f}億 -> {last_year_value/1e8:.2f}億 ({yoy_growth:.1f}%)")
                             else:
                                 financial_indicators[f"{display_name}_YoY成長率"] = "去年同期為0"
                         else:
@@ -640,12 +643,13 @@ def get_raw_data(stock_code):
             "available_data": all_data["data_availability"],
             
             "financial_data": {
-                "基本資料": all_data["raw_data"].get("basic_info", {}),
+                "基本資料": all_data["calculated_indicators"].get("基本資料", {}),
                 "最新財務指標": all_data["calculated_indicators"].get("損益表指標", {}),
                 "月營收資料": all_data["calculated_indicators"].get("月營收指標", {}),
                 "現金流指標": all_data["calculated_indicators"].get("現金流指標", {}),
                 "資產負債指標": all_data["calculated_indicators"].get("資產負債指標", {}),
-                "交易指標": all_data["calculated_indicators"].get("交易指標", {})
+                "交易指標": all_data["calculated_indicators"].get("交易指標", {}),
+                "YoY成長率總結": all_data["calculated_indicators"].get("YoY成長率總結", {})
             },
             
             "risk_analysis_framework": {
