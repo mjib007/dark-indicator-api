@@ -93,7 +93,7 @@ class DarkIndicatorDataCollector:
                     }
                 },
                 "daily_price": {
-                    "dataset": "TaiwanStockDaily",
+                    "dataset": "TaiwanStockPrice",
                     "fields": {
                         "Trading_Volume": "成交量",
                         "Trading_money": "成交值",
