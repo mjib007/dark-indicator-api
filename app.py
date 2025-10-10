@@ -240,7 +240,7 @@ class DarkIndicatorDataCollector:
             
             # 7. 日股價資料
             print(f"抓取日股價...")
-            daily_data = self.fetch_data("TaiwanStockDaily", stock_code)
+            daily_data = self.fetch_data("TaiwanStockPrice", stock_code)
             if daily_data:
                 result["raw_data"]["daily_price"] = daily_data
                 result["data_availability"]["日股價資料"] = f"可用 ({len(daily_data)}筆)"
