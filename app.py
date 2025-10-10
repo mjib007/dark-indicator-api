@@ -582,13 +582,32 @@ class DarkIndicatorDataCollector:
                         "股價淨值比": latest_per.get('PBR', '無資料'),
                         "殖利率": f"{latest_per.get('dividend_yield', 0):.2f}%" if latest_per.get('dividend_yield') else '無資料'
                     })
-            
+
+            # 當沖率計算
+            if "day_trading" in raw_data and "daily_price" in raw_data:
+                daytrading_df = pd.DataFrame(raw_data["day_trading"])
+                daily_df = pd.DataFrame(raw_data["daily_price"])
+
+                if not daytrading_df.empty and not daily_df.empty:
+                    latest_daytrading = daytrading_df.iloc[-1]
+                    latest_daily = daily_df.iloc[-1]
+
+                    daytrading_volume = latest_daytrading.get('Volume', 0)
+                    total_volume = latest_daily.get('Trading_Volume', 0)
+
+                    if total_volume > 0:
+                        daytrading_rate = (daytrading_volume / total_volume) * 100
+                        trading_indicators["現股當沖率"] = f"{daytrading_rate:.2f}%"
+                    else:
+                        trading_indicators["現股當沖率"] = "0%"
+
+            # 整合交易指標
             if trading_indicators:
                 indicators["交易指標"] = trading_indicators
-            
+
             # 7. YoY成長率總結
             yoy_summary = {}
-            
+
             if "損益表指標" in indicators:
                 profit_indicators = indicators["損益表指標"]
                 yoy_summary["獲利成長分析"] = {
@@ -597,7 +616,7 @@ class DarkIndicatorDataCollector:
                     "營收YoY": profit_indicators.get("最新季營收_YoY成長率", "無資料"),
                     "營業利益YoY": profit_indicators.get("最新季營業利益_YoY成長率", "無資料")
                 }
-            
+
             if "資產負債指標" in indicators:
                 balance_indicators = indicators["資產負債指標"]
                 yoy_summary["資產成長分析"] = {
@@ -605,10 +624,10 @@ class DarkIndicatorDataCollector:
                     "存貨YoY": balance_indicators.get("存貨_YoY成長率", "無資料"),
                     "總資產YoY": balance_indicators.get("總資產_YoY成長率", "無資料")
                 }
-            
+
             if yoy_summary:
                 indicators["YoY成長率總結"] = yoy_summary
-            
+
             # 8. 標記無資料項目
             indicators["FinMind無資料項目"] = {
                 "籌碼資料": {
@@ -625,11 +644,11 @@ class DarkIndicatorDataCollector:
                     "可轉債次數": "需重大訊息公告"
                 }
             }
-            
+
         except Exception as e:
             indicators["計算錯誤"] = str(e)
             print(f"計算錯誤: {str(e)}")
-        
+
         return indicators
 
 # 建立資料收集器實例
