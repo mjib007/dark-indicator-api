@@ -282,8 +282,8 @@ class DarkIndicatorDataCollector:
                 "timestamp": datetime.now().isoformat()
             }
     
-    def _calculate_basic_indicators(self, raw_data):
-        """計算基本指標"""
+def _calculate_basic_indicators(self, raw_data):
+        """計算基本指標 - 修正版，加入YoY計算和應收帳款"""
         indicators = {}
         
         try:
@@ -297,11 +297,27 @@ class DarkIndicatorDataCollector:
                     "股票類型": basic.get("type")
                 }
             
-            # 2. 最新財務指標
+            # 2. 最新財務指標 + YoY計算
             if "financial_statement" in raw_data:
                 financial_df = pd.DataFrame(raw_data["financial_statement"])
+                financial_df['date'] = pd.to_datetime(financial_df['date'])
+                
+                # 找最新日期和去年同期
                 latest_date = financial_df['date'].max()
+                latest_year = latest_date.year
+                latest_quarter = ((latest_date.month - 1) // 3) + 1
+                
+                # 計算去年同期日期
+                try:
+                    last_year_same_quarter = latest_date.replace(year=latest_year-1)
+                except:
+                    # 處理閏年問題
+                    last_year_same_quarter = latest_date.replace(year=latest_year-1, month=6, day=30)
+                
+                print(f"計算YoY: {latest_date.strftime('%Y-%m-%d')} vs {last_year_same_quarter.strftime('%Y-%m-%d')}")
+                
                 latest_financial = financial_df[financial_df['date'] == latest_date]
+                last_year_financial = financial_df[financial_df['date'] == last_year_same_quarter]
                 
                 # 提取關鍵財務項目
                 financial_mapping = {
@@ -315,13 +331,29 @@ class DarkIndicatorDataCollector:
                     "營業毛利（毛損）": "營業毛利"
                 }
                 
-                financial_indicators = {"最新財報日期": latest_date}
+                financial_indicators = {"最新財報日期": latest_date.strftime('%Y-%m-%d')}
+                
+                # 計算當期指標和YoY
                 for origin_name, display_name in financial_mapping.items():
-                    match = latest_financial[latest_financial['origin_name'] == origin_name]
-                    if not match.empty:
-                        value = float(match['value'].iloc[0])
-                        financial_indicators[display_name] = value
-                        financial_indicators[f"{display_name}_億元"] = f"{value/1e8:.2f}億" if abs(value) >= 1e8 else f"{value:,.0f}"
+                    current_match = latest_financial[latest_financial['origin_name'] == origin_name]
+                    last_year_match = last_year_financial[last_year_financial['origin_name'] == origin_name]
+                    
+                    if not current_match.empty:
+                        current_value = float(current_match['value'].iloc[0])
+                        financial_indicators[display_name] = current_value
+                        financial_indicators[f"{display_name}_億元"] = f"{current_value/1e8:.2f}億" if abs(current_value) >= 1e8 else f"{current_value:,.0f}"
+                        
+                        # 計算YoY成長率
+                        if not last_year_match.empty:
+                            last_year_value = float(last_year_match['value'].iloc[0])
+                            if last_year_value != 0:
+                                yoy_growth = ((current_value - last_year_value) / abs(last_year_value)) * 100
+                                financial_indicators[f"{display_name}_YoY成長率"] = f"{yoy_growth:.1f}%"
+                                financial_indicators[f"{display_name}_去年同期"] = f"{last_year_value/1e8:.2f}億" if abs(last_year_value) >= 1e8 else f"{last_year_value:,.0f}"
+                            else:
+                                financial_indicators[f"{display_name}_YoY成長率"] = "去年同期為0"
+                        else:
+                            financial_indicators[f"{display_name}_YoY成長率"] = "無去年同期資料"
                     else:
                         financial_indicators[display_name] = "無資料"
                 
@@ -329,17 +361,20 @@ class DarkIndicatorDataCollector:
                 
                 # 計算比率
                 if "營業收入" in [match['origin_name'] for _, match in latest_financial.iterrows()]:
-                    revenue_val = latest_financial[latest_financial['origin_name'] == '營業收入']['value'].iloc[0]
+                    revenue_val = latest_financial[latest_financial['origin_name'] == '營業收入']['value']
                     operating_val = latest_financial[latest_financial['origin_name'] == '營業利益（損失）']['value']
                     gross_val = latest_financial[latest_financial['origin_name'] == '營業毛利（毛損）']['value']
                     
-                    if not operating_val.empty and revenue_val != 0:
-                        indicators["營業利益率%"] = f"{(float(operating_val.iloc[0]) / float(revenue_val)) * 100:.1f}%"
-                    
-                    if not gross_val.empty and revenue_val != 0:
-                        indicators["毛利率%"] = f"{(float(gross_val.iloc[0]) / float(revenue_val)) * 100:.1f}%"
+                    if not revenue_val.empty and float(revenue_val.iloc[0]) != 0:
+                        revenue_amount = float(revenue_val.iloc[0])
+                        
+                        if not operating_val.empty:
+                            indicators["營業利益率%"] = f"{(float(operating_val.iloc[0]) / revenue_amount) * 100:.1f}%"
+                        
+                        if not gross_val.empty:
+                            indicators["毛利率%"] = f"{(float(gross_val.iloc[0]) / revenue_amount) * 100:.1f}%"
             
-            # 3. 月營收指標
+            # 3. 月營收指標 (已有YoY)
             if "monthly_revenue" in raw_data:
                 revenue_df = pd.DataFrame(raw_data["monthly_revenue"])
                 if not revenue_df.empty:
@@ -393,11 +428,24 @@ class DarkIndicatorDataCollector:
                 
                 indicators["現金流指標"] = cf_indicators
             
-            # 5. 資產負債指標
+            # 5. 資產負債指標 + YoY計算 + 應收帳款提取
             if "balance_sheet" in raw_data:
                 bs_df = pd.DataFrame(raw_data["balance_sheet"])
+                bs_df['date'] = pd.to_datetime(bs_df['date'])
+                
+                # 找最新日期和去年同期
                 latest_bs_date = bs_df['date'].max()
+                latest_bs_year = latest_bs_date.year
+                
+                try:
+                    last_year_bs_date = latest_bs_date.replace(year=latest_bs_year-1)
+                except:
+                    last_year_bs_date = latest_bs_date.replace(year=latest_bs_year-1, month=6, day=30)
+                
                 latest_bs = bs_df[bs_df['date'] == latest_bs_date]
+                last_year_bs = bs_df[bs_df['date'] == last_year_bs_date]
+                
+                print(f"資產負債表YoY計算: {latest_bs_date.strftime('%Y-%m-%d')} vs {last_year_bs_date.strftime('%Y-%m-%d')}")
                 
                 bs_mapping = {
                     "資產總額": "總資產",
@@ -405,21 +453,41 @@ class DarkIndicatorDataCollector:
                     "流動資產合計": "流動資產", 
                     "流動負債合計": "流動負債",
                     "存貨": "存貨",
+                    "應收帳款淨額": "應收帳款",  # 關鍵：加入應收帳款！
                     "普通股股本": "股本"
                 }
                 
-                bs_indicators = {"最新資產負債表日期": latest_bs_date}
+                bs_indicators = {"最新資產負債表日期": latest_bs_date.strftime('%Y-%m-%d')}
                 bs_values = {}
                 
                 for origin_name, display_name in bs_mapping.items():
-                    match = latest_bs[latest_bs['origin_name'] == origin_name]
-                    if not match.empty:
-                        value = float(match['value'].iloc[0])
-                        bs_values[display_name] = value
-                        bs_indicators[display_name] = value
-                        bs_indicators[f"{display_name}_億元"] = f"{value/1e8:.2f}億"
+                    current_match = latest_bs[latest_bs['origin_name'] == origin_name]
+                    last_year_match = last_year_bs[last_year_bs['origin_name'] == origin_name]
+                    
+                    if not current_match.empty:
+                        current_value = float(current_match['value'].iloc[0])
+                        bs_values[display_name] = current_value
+                        bs_indicators[display_name] = current_value
+                        bs_indicators[f"{display_name}_億元"] = f"{current_value/1e8:.2f}億"
+                        
+                        # 計算YoY成長率
+                        if not last_year_match.empty:
+                            last_year_value = float(last_year_match['value'].iloc[0])
+                            if last_year_value != 0:
+                                yoy_growth = ((current_value - last_year_value) / abs(last_year_value)) * 100
+                                bs_indicators[f"{display_name}_YoY成長率"] = f"{yoy_growth:.1f}%"
+                                bs_indicators[f"{display_name}_去年同期"] = f"{last_year_value/1e8:.2f}億"
+                                
+                                # 特別標註重要指標
+                                if display_name in ["應收帳款", "存貨"]:
+                                    print(f"✅ {display_name}YoY: {current_value/1e8:.2f}億 -> {last_year_value/1e8:.2f}億 ({yoy_growth:.1f}%)")
+                            else:
+                                bs_indicators[f"{display_name}_YoY成長率"] = "去年同期為0"
+                        else:
+                            bs_indicators[f"{display_name}_YoY成長率"] = "無去年同期資料"
                     else:
                         bs_indicators[display_name] = "無資料"
+                        print(f"⚠️ 找不到 {origin_name} 欄位")
                 
                 # 計算比率
                 if "總負債" in bs_values and "總資產" in bs_values and bs_values["總資產"] != 0:
@@ -467,7 +535,30 @@ class DarkIndicatorDataCollector:
             if trading_indicators:
                 indicators["交易指標"] = trading_indicators
             
-            # 7. 標記無資料項目
+            # 7. YoY成長率總結
+            yoy_summary = {}
+            
+            if "損益表指標" in indicators:
+                profit_indicators = indicators["損益表指標"]
+                yoy_summary["獲利成長分析"] = {
+                    "淨利YoY": profit_indicators.get("最新季淨利_YoY成長率", "無資料"),
+                    "EPS_YoY": profit_indicators.get("最新季EPS_YoY成長率", "無資料"),
+                    "營收YoY": profit_indicators.get("最新季營收_YoY成長率", "無資料"),
+                    "營業利益YoY": profit_indicators.get("最新季營業利益_YoY成長率", "無資料")
+                }
+            
+            if "資產負債指標" in indicators:
+                balance_indicators = indicators["資產負債指標"]
+                yoy_summary["資產成長分析"] = {
+                    "應收帳款YoY": balance_indicators.get("應收帳款_YoY成長率", "無資料"),
+                    "存貨YoY": balance_indicators.get("存貨_YoY成長率", "無資料"),
+                    "總資產YoY": balance_indicators.get("總資產_YoY成長率", "無資料")
+                }
+            
+            if yoy_summary:
+                indicators["YoY成長率總結"] = yoy_summary
+            
+            # 8. 標記無資料項目
             indicators["FinMind無資料項目"] = {
                 "籌碼資料": {
                     "超過1千張增減(%)": "需公開資訊觀測站",
@@ -475,7 +566,7 @@ class DarkIndicatorDataCollector:
                     "全體董監質押(%)": "需公開資訊觀測站",
                     "董監持股比例": "需公開資訊觀測站",
                     "10%大股東變動(近一年)": "需公開資訊觀測站",
-                    "10%大股東變動(最新月份)": "需公開資訊觀測站", 
+                    "10%大股東變動(最新月份)": "需公開資訊觀測站",
                     "10%大股東近12個月增減變動次數": "需公開資訊觀測站"
                 },
                 "特殊事件": {
@@ -486,6 +577,7 @@ class DarkIndicatorDataCollector:
             
         except Exception as e:
             indicators["計算錯誤"] = str(e)
+            print(f"計算錯誤: {str(e)}")
         
         return indicators
 
