@@ -509,7 +509,22 @@ class DarkIndicatorDataCollector:
             
             # 6. 交易指標
             trading_indicators = {}
-            
+            # 十日平均成交量 - 新增！
+            if "daily_price" in raw_data:
+                daily_df = pd.DataFrame(raw_data["daily_price"])
+                if not daily_df.empty and len(daily_df) >= 10:
+                    # 取最近10天的資料
+                    recent_10_days = daily_df.tail(10)
+                    avg_volume_10d = recent_10_days['Trading_Volume'].mean()
+                    latest_volume = daily_df.iloc[-1]['Trading_Volume']
+                    
+                    trading_indicators.update({
+                        "10日平均成交量": f"{avg_volume_10d:,.0f}股",
+                        "10日平均成交量_張": f"{avg_volume_10d/1000:,.0f}張",
+                        "最新成交量": f"{latest_volume:,.0f}股",
+                        "最新成交量_張": f"{latest_volume/1000:,.0f}張",
+                        "量比": f"{(latest_volume / avg_volume_10d * 100):.1f}%"
+                    })            
             # 融資融券
             if "margin_trading" in raw_data:
                 margin_df = pd.DataFrame(raw_data["margin_trading"])
