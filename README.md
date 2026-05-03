@@ -79,12 +79,12 @@
 
 | | 傳統做法 | 本專案 |
 |--|---------|-------|
-| 資料來源 | 手動翻多個網站 | 自動串接 FinMind API |
-| 指標數量 | Excel 30+ 項手動填 | 39 項自動計算 |
-| YoY 計算 | 自己對齊去年同期 | 自動抓去年同期比對 |
-| 風險判讀 | 看數字自己猜 | 五大致命組合自動掃描 |
-| 結果呈現 | 一堆紅黃綠數字 | AI 寫成白話分析報告 |
-| 完成時間 | 30 分鐘起跳 | 30 秒完成 |
+| 資料來源 | 手動抓取多個網站資料 | 自動串接 FinMind API |
+| 指標數量 | Excel 30+ 項抓取資料 | 39 項自動計算 |
+| YoY 計算 | 寫函數比較 | 自動抓去年同期比對 |
+| 風險判讀 | 看數字自己憑經驗解析 | 五大致命組合自動掃描、Prompt指導AI分析 |
+| 結果呈現 | 一堆指標項目與數字 | AI 寫成白話分析報告 |
+| 完成時間 | 60 分鐘起跳 | 3 分鐘完成 |
 
 
 <img src="https://scontent.frmq3-3.fna.fbcdn.net/v/t39.30808-6/688743447_10162789220502966_2372250693778145254_n.jpg?_nc_cat=110&ccb=1-7&_nc_sid=13d280&_nc_ohc=7p0Yi8AOxyQQ7kNvwF_M_Tp&_nc_oc=AdoDScWGe-ST7dLBlL1JIj19jMQlYZ233a3GzmFnRJUVsn4XcfJMD71q9U4VLOrOw7qVL8RM_qJWMcR6HJFs-BUx&_nc_zt=23&_nc_ht=scontent.frmq3-3.fna&_nc_gid=GX97PN9qGj1t9HB_jnrwgg&_nc_ss=7b2a8&oh=00_Af5IXZmIdHK2_6fSGHY4JTFFggDbaJS0SyH4yA2A4y6elw&oe=69FC7A5A" width="50%">
