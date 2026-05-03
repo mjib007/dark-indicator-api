@@ -628,7 +628,43 @@ class DarkIndicatorDataCollector:
             if yoy_summary:
                 indicators["YoY成長率總結"] = yoy_summary
 
-            # 8. 標記無資料項目
+            # 9. 營運品質雙重過濾規則 (新增功能)
+            if "損益表指標" in indicators and "資產負債指標" in indicators:
+                try:
+                    def parse_yoy(yoy_str):
+                        if not isinstance(yoy_str, str) or "%" not in yoy_str:
+                            return None
+                        return float(yoy_str.replace("%", ""))
+
+                    rev_yoy = parse_yoy(indicators["損益表指標"].get("最新季營收_YoY成長率"))
+                    rec_yoy = parse_yoy(indicators["資產負債指標"].get("應收帳款_YoY成長率"))
+                    inv_yoy = parse_yoy(indicators["資產負債指標"].get("存貨_YoY成長率"))
+
+                    if rev_yoy is not None:
+                        quality_analysis = {"分析基準(營收YoY)": f"{rev_yoy}%"}
+                        
+                        if rec_yoy is not None:
+                            status = "通過 ✅" if rec_yoy < rev_yoy else "警示 ⚠️"
+                            quality_analysis["1.應收帳款檢驗(回款能力)"] = {
+                                "數值": f"{rec_yoy}%",
+                                "結果": status,
+                                "說明": "應收帳款增速低於營收" if status == "通過 ✅" else "應收帳款增速過快，注意回款風險"
+                            }
+                        
+                        if inv_yoy is not None:
+                            status = "通過 ✅" if inv_yoy < rev_yoy else "警示 ⚠️"
+                            quality_analysis["2.存貨檢驗(銷售效率)"] = {
+                                "數值": f"{inv_yoy}%",
+                                "結果": status,
+                                "說明": "存貨增速低於營收" if status == "通過 ✅" else "存貨堆積速度高於銷售速度"
+                            }
+                        
+                        if len(quality_analysis) > 1:
+                            indicators["營運品質分析"] = quality_analysis
+                except Exception as e:
+                    print(f"營運品質分析計算出錯: {e}")
+
+            # 10. 標記無資料項目
             indicators["FinMind無資料項目"] = {
                 "籌碼資料": {
                     "超過1千張增減(%)": "需公開資訊觀測站",
@@ -863,4 +899,4 @@ if __name__ == '__main__':
     # Zeabur會自動設定PORT環境變數
     import os
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    app.run(host='0.0.0.0', port=port)
