@@ -57,13 +57,18 @@
 每次教學前，我得做這些事：
 
 1。 打開 GoodInfo、公開資訊觀測站等網站蒐集資料
+
 2。 輸入到Google Sheet
+
 3。 轉換成Excel檔案
+
 4。  一檔一檔股票輸入代號
+
 5。 查看每一個欄位的變化並進行解析
+
 6。 **重複以上動作**
 
-更慘的是，**Excel 給出的是「靜態快照」**——
+更慘的是，**Excel 給出的是「靜態快照」**，
 給你一堆數字，但沒有告訴你「**這代表什麼意思**」、「**該不該擔心**」。
 
 ### 🚀 現在：輸入代號，AI 直接幫你解讀
@@ -80,6 +85,9 @@
 | 風險判讀 | 看數字自己猜 | 五大致命組合自動掃描 |
 | 結果呈現 | 一堆紅黃綠數字 | AI 寫成白話分析報告 |
 | 完成時間 | 30 分鐘起跳 | 30 秒完成 |
+
+
+<img src="https://scontent.frmq3-3.fna.fbcdn.net/v/t39.30808-6/688743447_10162789220502966_2372250693778145254_n.jpg?_nc_cat=110&ccb=1-7&_nc_sid=13d280&_nc_ohc=7p0Yi8AOxyQQ7kNvwF_M_Tp&_nc_oc=AdoDScWGe-ST7dLBlL1JIj19jMQlYZ233a3GzmFnRJUVsn4XcfJMD71q9U4VLOrOw7qVL8RM_qJWMcR6HJFs-BUx&_nc_zt=23&_nc_ht=scontent.frmq3-3.fna&_nc_gid=GX97PN9qGj1t9HB_jnrwgg&_nc_ss=7b2a8&oh=00_Af5IXZmIdHK2_6fSGHY4JTFFggDbaJS0SyH4yA2A4y6elw&oe=69FC7A5A" width="30%">
 
 ---
 
