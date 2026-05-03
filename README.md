@@ -29,6 +29,8 @@
 2024 年我帶著這套指標到香港大學的第七屆兩岸四地金融法論壇(參考[上海政法大學報導](https://www.shupl.edu.cn/rgznfxy/2024/0228/c1693a128782/page.htm))，
 報告主題就是「**證券犯罪預測：壞股票的特徵值**」。
 
+![報告現場](https://scontent.frmq3-3.fna.fbcdn.net/v/t39.30808-6/516072468_10161540608047966_3151668797035823074_n.jpg?_nc_cat=101&ccb=1-7&_nc_sid=13d280&_nc_ohc=_8XUwDZedycQ7kNvwHrPnuA&_nc_oc=Adp1QhAagocX3xfaPVPc8gHWidwDrlwWEvuBeDmw0f391nVyomtnKYlmRrrHGfAeiV4JG5TbJGJz13UIrQLBdkRh&_nc_zt=23&_nc_ht=scontent.frmq3-3.fna&_nc_gid=UH_zeZxtA2zkSzXOKY2Xpw&_nc_ss=7b2a8&oh=00_Af7d28rPRLWBUgDczBbLQoTM_uW5TlknCbplAi-QNfFtCA&oe=69FC9BC8)
+
 讓我意外的是，**現場有兩位來自上海的法學教授，正在做幾乎一樣的研究**。
 其中一位資深教授會後特別找我加微信，聊起來才發現——
 她遇到的瓶頸，正是「**多重資料來源整合**」這種對法律人來說極為棘手的技術問題。
