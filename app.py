@@ -898,5 +898,5 @@ def test_api(stock_code):
 if __name__ == '__main__':
     # Zeabur會自動設定PORT環境變數
     import os
-    port = int(os.environ.get('PORT', 5001))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
